@@ -122,27 +122,38 @@ class PointNetFeaturePropagation(nn.Module):
             last_channel = out_channel
 
     def forward(self, xyz1, xyz2, points1, points2):
-        xyz1, xyz2 = xyz1.permute(0, 2, 1), xyz2.permute(0, 2, 1)
+        # xyz1: [B, 3, N] (高分辨率，点多)
+        # xyz2: [B, 3, S] (低分辨率，点少)
+        # points1: [B, C1, N], points2: [B, C2, S]
+        xyz1 = xyz1.permute(0, 2, 1)
+        xyz2 = xyz2.permute(0, 2, 1)
+
         B, N, C = xyz1.shape
         _, S, _ = xyz2.shape
 
-        dists = square_distance(xyz2, xyz1)
-        dists, idx = dists.sort(dim=-1)
-        dists, idx = dists[:, :, :3], idx[:, :, :3]
+        if S == 1:
+            interpolated_points = points2.repeat(1, N, 1)
+        else:
+            # 正确的距离计算：从高分辨率点(N)寻找最近的低分辨率点(S)
+            dists = square_distance(xyz1, xyz2)
+            dists, idx = dists.sort(dim=-1)
+            dists, idx = dists[:, :, :3], idx[:, :, :3]  # [B, N, 3]
 
-        dist_recip = 1.0 / (dists + 1e-8)
-        norm = torch.sum(dist_recip, dim=2, keepdim=True)
-        weight = dist_recip / norm
+            dist_recip = 1.0 / (dists + 1e-8)
+            norm = torch.sum(dist_recip, dim=2, keepdim=True)
+            weight = dist_recip / norm # [B, N, 3]
 
-        interpolated_points = torch.sum(index_points(points1.permute(0, 2, 1), idx) * weight.view(B, S, 3, 1), dim=2)
+            # 对 points2 进行插值
+            interpolated_points = torch.sum(index_points(points2.permute(0, 2, 1), idx) * weight.view(B, N, 3, 1), dim=2)
 
-        if points2 is not None:
-            points2 = points2.permute(0, 2, 1)
-            new_points = torch.cat([points2, interpolated_points], dim=-1)
+        if points1 is not None:
+            points1 = points1.permute(0, 2, 1) # [B, N, C1]
+            # 将高分辨率特征与插值后的低分辨率特征拼接
+            new_points = torch.cat([points1, interpolated_points], dim=-1)
         else:
             new_points = interpolated_points
 
-        new_points = new_points.permute(0, 2, 1)
+        new_points = new_points.permute(0, 2, 1) # 恢复形状 [B, C1+C2, N]
         for i, conv in enumerate(self.mlp_convs):
             bn = self.mlp_bns[i]
             new_points = F.relu(bn(conv(new_points)))
@@ -156,8 +167,8 @@ class get_model(nn.Module):
     def __init__(self, num_classes=2):
         super(get_model, self).__init__()
         # SA层：逐层降采样，扩大感受野，提取几何特征
-        # in_channel=6 (因为输入除了XYZ还有3个法向量特征)
-        self.sa1 = PointNetSetAbstraction(1024, 0.1, 32, 6 + 3, [32, 32, 64], False)
+        # 【修改点 1】：3 (归一化XYZ) + 3 (法向量特征) = 6
+        self.sa1 = PointNetSetAbstraction(1024, 0.1, 32, 3 + 3, [32, 32, 64], False)
         self.sa2 = PointNetSetAbstraction(256, 0.2, 32, 64 + 3, [64, 64, 128], False)
         self.sa3 = PointNetSetAbstraction(64, 0.4, 32, 128 + 3, [128, 128, 256], False)
         self.sa4 = PointNetSetAbstraction(16, 0.8, 32, 256 + 3, [256, 256, 512], False)
@@ -166,7 +177,8 @@ class get_model(nn.Module):
         self.fp4 = PointNetFeaturePropagation(768, [256, 256])
         self.fp3 = PointNetFeaturePropagation(384, [256, 256])
         self.fp2 = PointNetFeaturePropagation(320, [256, 128])
-        self.fp1 = PointNetFeaturePropagation(128 + 6, [128, 128, 128])
+        # 【修改点 2】：128 (fp2输出) + 3 (最原始的法向量特征) = 131
+        self.fp1 = PointNetFeaturePropagation(128 + 3, [128, 128, 128])
 
         # 最后的分类器
         self.conv1 = nn.Conv1d(128, 128, 1)

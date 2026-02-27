@@ -3,8 +3,8 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
-from TunnelDataset import TunnelDataset
-
+from models.pointnet2_sem_seg import get_model, get_loss
+from core.dataset import TunnelDataset
 
 # 假设你已经将 PointNet++ 的模型代码放在了 models 文件夹下
 # 这里提供一个占位导入，你需要根据你克隆的仓库实际结构修改
@@ -26,7 +26,7 @@ def train():
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
     # 替换 train.py 中的这一部分
-    from models.pointnet2_sem_seg import get_model, get_loss
+
 
     # 3. 初始化模型与损失函数 (2个类别：背景=0，管道=1)
     print("🧠 正在初始化 PointNet++ 网络...")

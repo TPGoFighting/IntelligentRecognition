@@ -1,3 +1,16 @@
-.idea/
-venv/
+# Dataset
+data/
+*.npy
+*.pcd
+*.ply
+
+# Model weights
+checkpoints/
+*.pth
+*.pt
+
+# Python caches
 __pycache__/
+*.pyc
+.idea/
+.vscode/
