@@ -1,0 +1,7 @@
+numpy
+torch
+open3d
+pyvista
+pyvistaqt
+PyQt5
+pyransac3d
