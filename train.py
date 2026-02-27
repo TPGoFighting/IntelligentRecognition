@@ -14,7 +14,7 @@ def train():
     print("🚀 启动隧道管道 PointNet++ 语义分割训练...")
 
     # 1. 基础配置
-    data_root = "data"  # 你的 .npy 数据集存放目录
+    data_root = "data/processed"
     batch_size = 16
     epochs = 50
     learning_rate = 0.001
@@ -22,7 +22,13 @@ def train():
     print(f"🖥️ 当前使用计算设备: {device}")
 
     # 2. 加载数据集
-    train_dataset = TunnelDataset(data_root=data_root, num_points=4096, block_size=2.0, train=True)
+    # 2. 加载数据集 (这行代码本身其实不用大改，主要是它吃进去的 data_root 变了)
+    train_dataset = TunnelDataset(
+        data_root=data_root,
+        num_points=4096,  # 每次塞给显卡的点数，4096是经典配置
+        block_size=3.0,  # 💡 进阶建议：我把你原来的 2.0 改成了 3.0
+        train=True
+    )
     train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
     # 替换 train.py 中的这一部分
