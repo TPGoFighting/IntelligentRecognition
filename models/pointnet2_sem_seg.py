@@ -60,8 +60,17 @@ def query_ball_point(radius, nsample, xyz, new_xyz):
     group_idx[sqrdists > radius ** 2] = N
     group_idx = group_idx.sort(dim=-1)[0][:, :, :nsample]
     group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, nsample])
+
+    # 如果第一个索引是N（表示没有有效点），则使用索引0作为备用
+    group_first[group_first == N] = 0
+
     mask = group_idx == N
     group_idx[mask] = group_first[mask]
+
+    # 最终检查：确保没有索引等于N
+    if torch.any(group_idx == N):
+        group_idx[group_idx == N] = 0
+
     return group_idx
 
 

@@ -1,4 +1,7 @@
 import os
+os.environ['OPENBLAS_NUM_THREADS'] = '2'
+os.environ['OMP_NUM_THREADS'] = '2'
+
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -11,17 +14,22 @@ def train():
     # ==========================================================
     # 1. 针对 RTX 4060 & 32核 CPU 的专项配置
     # ==========================================================
-    data_root = "data/processed"
-    batch_size = 32  # 8GB 显存建议从 32 开始，如果报错再调回 16
-    epochs = 50
+    data_root = "test_data/processed"  # 改为测试数据目录
+    batch_size = 4  # 快速测试，使用小batch
+    epochs = 1  # 快速测试，正常训练时改为50
     learning_rate = 0.001
+    grad_clip = 1.0  # 梯度裁剪阈值，防止梯度爆炸
+    weight_decay = 1e-5  # 权重衰减，防止过拟合
 
     # 启用底层算法自动优化
     torch.backends.cudnn.benchmark = True
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"🖥️  检测到硬件加速: {torch.cuda.get_device_name(0)}")
-    print(f"🚀 核心配置: Batch Size={batch_size}, Device={device}")
+    # 强制使用CPU进行调试
+    device = torch.device("cpu")
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"[GPU]  检测到硬件加速: {torch.cuda.get_device_name(0)}")
+    print(f"[ROCKET] 核心配置: Batch Size={batch_size}, Device={device}")
+    print(f"[CHART] 训练参数: LR={learning_rate}, 梯度裁剪={grad_clip}, 权重衰减={weight_decay}")
 
     # 2. 加载数据集
     train_dataset = TunnelDataset(data_root=data_root, num_points=4096, block_size=3.0, train=True)
@@ -32,15 +40,18 @@ def train():
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
-        num_workers=8,
-        pin_memory=True,
+        num_workers=2,
+        pin_memory=False,
         drop_last=True  # 丢弃最后不满足 Batch 的数据，保持计算步长一致
     )
 
     # 3. 初始化模型与损失函数
     model = get_model(num_classes=2).to(device)
     criterion = get_loss().to(device)
-    optimizer = optim.Adam(model.parameters(), lr=learning_rate)
+    optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
+
+    # 学习率调度器：每20个epoch衰减到原来的0.7
+    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=20, gamma=0.7)
 
     # 4. 初始化 AMP (自动混合精度) 缩放器
     scaler = torch.amp.GradScaler(device.type)
@@ -66,8 +77,19 @@ def train():
                 predictions = model(points)
                 loss = criterion(predictions, labels)
 
+            # 检查loss是否为NaN
+            if torch.isnan(loss):
+                print(f"[WARN]  Warning: NaN loss at batch {batch_idx}, skipping this batch")
+                continue
+
             # 缩放损失并回传
             scaler.scale(loss).backward()
+
+            # 梯度裁剪（防止梯度爆炸）
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=grad_clip)
+
+            # 更新参数
             scaler.step(optimizer)
             scaler.update()
 
@@ -77,12 +99,17 @@ def train():
                 print(f"Epoch [{epoch + 1}/{epochs}] Step [{batch_idx}/{len(train_loader)}] Loss: {loss.item():.4f}")
 
         avg_loss = total_loss / len(train_loader)
-        print(f"🏁 Epoch {epoch + 1} 结束，平均 Loss: {avg_loss:.4f}")
+        print(f"[FLAG] Epoch {epoch + 1} 结束，平均 Loss: {avg_loss:.4f}")
+
+        # 更新学习率
+        scheduler.step()
+        current_lr = optimizer.param_groups[0]['lr']
+        print(f"[UP] 学习率更新: {current_lr:.6f}")
 
         if avg_loss < best_loss:
             best_loss = avg_loss
             torch.save(model.state_dict(), "checkpoints/best_pipe_model.pth")
-            print(f"💾 权重已更新: checkpoints/best_pipe_model.pth")
+            print(f"[DISK] 权重已更新: checkpoints/best_pipe_model.pth")
 
 
 if __name__ == "__main__":

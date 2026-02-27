@@ -20,6 +20,13 @@ class TunnelDetectorApp(QMainWindow):
         self.setGeometry(100, 100, 1100, 750)
         self.raw_points = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        # 大点云处理配置
+        self.max_points = 1000000  # 最大处理点数，超过会自动降采样
+        self.voxel_size = 0.05  # 初始体素降采样大小
+        self.max_windows = 200  # 最大滑窗数量，防止无限循环
+        self.render_point_limit = 50000  # 渲染点数限制，防止图形崩溃
+
         self.init_ui()
 
     def init_ui(self):
@@ -70,14 +77,55 @@ class TunnelDetectorApp(QMainWindow):
         QApplication.processEvents()
 
     def load_real_point_cloud(self):
-        file_name, _ = QFileDialog.getOpenFileName(self, "选择点云文件", "", "Point Cloud Files (*.ply *.pcd)")
-        if file_name:
+        try:
+            file_name, _ = QFileDialog.getOpenFileName(self, "选择点云文件", "", "Point Cloud Files (*.ply *.pcd)")
+            if not file_name:
+                return
+
+            self.log(f"正在加载点云文件: {os.path.basename(file_name)}")
+
+            # 读取点云
             pcd = o3d.io.read_point_cloud(file_name)
+            if len(pcd.points) == 0:
+                self.log("[错误] 点云文件为空")
+                return
+
+            raw_points = np.asarray(pcd.points)
+            self.log(f"原始点数: {len(raw_points)}")
+
+            # 自动降采样：如果点数超过限制，增加体素大小
+            voxel_size = self.voxel_size
+            if len(raw_points) > self.max_points:
+                self.log(f"点云过大，自动降采样...")
+                # 根据点数调整体素大小
+                ratio = self.max_points / len(raw_points)
+                voxel_size = self.voxel_size * (1.0 / ratio) ** (1/3)  # 体积缩放
+                voxel_size = max(voxel_size, 0.01)  # 最小体素大小
+                self.log(f"调整体素大小: {voxel_size:.3f}")
+
+            # 降采样以提高处理速度
+            if voxel_size > 0:
+                pcd = pcd.voxel_down_sample(voxel_size=voxel_size)
+                self.log(f"降采样后点数: {len(pcd.points)}")
+
             self.raw_points = np.asarray(pcd.points)
+
+            # 渲染点云（限制渲染点数以防止图形崩溃）
+            render_points = self.raw_points
+            if len(render_points) > self.render_point_limit:
+                indices = np.random.choice(len(render_points), self.render_point_limit, replace=False)
+                render_points = render_points[indices]
+                self.log(f"渲染点数限制为: {self.render_point_limit}")
+
             self.plotter.clear()
-            self.plotter.add_mesh(pv.PolyData(self.raw_points), color="white", point_size=1, name="scene", opacity=0.3)
+            self.plotter.add_mesh(pv.PolyData(render_points), color="white", point_size=1, name="scene", opacity=0.3)
             self.plotter.reset_camera()
-            self.log(f"载入成功，点数: {len(self.raw_points)}")
+            self.log(f"✅ 点云载入成功，处理点数: {len(self.raw_points)}")
+
+        except Exception as e:
+            self.log(f"[错误] 加载点云失败: {str(e)}")
+            import traceback
+            self.log(traceback.format_exc())
 
     def run_intelligent_inference(self):
         """核心推理逻辑：修复了滑窗越界和 API 警告"""
@@ -113,30 +161,62 @@ class TunnelDetectorApp(QMainWindow):
         counts = np.zeros(len(points))
         xyz_min, xyz_max = points.min(0), points.max(0)
 
-        for z in np.arange(xyz_min[2], xyz_max[2], stride):
-            mask = (points[:, 2] >= z) & (points[:, 2] < z + block_size)
-            idx = np.where(mask)[0]
+        # 计算滑窗范围，防止无限循环
+        z_range = xyz_max[2] - xyz_min[2]
+        num_windows = int(np.ceil(z_range / stride))
 
-            if len(idx) < 1024:
-                continue  # ✅ 现在它安全地待在循环里了
+        # 自动调整步长，限制窗口数量
+        if num_windows > self.max_windows:
+            old_stride = stride
+            stride = max(z_range / self.max_windows, block_size * 0.8)  # 确保有重叠
+            num_windows = int(np.ceil(z_range / stride))
+            self.log(f"窗口数过多 ({num_windows})，调整步长: {old_stride:.2f} → {stride:.2f}")
 
-            if len(idx) >= 4096:
-                sel = np.random.choice(idx, 4096, replace=False)
-            else:
-                sel = np.random.choice(idx, 4096, replace=True)
+        # 生成窗口中心列表
+        z_centers = np.linspace(xyz_min[2] + block_size/2, xyz_max[2] - block_size/2, num_windows)
 
-            block_pts = points[sel] - points[sel].mean(0)
-            block_feat = np.hstack((block_pts, normals[sel]))
+        self.log(f"滑窗配置: {num_windows} 个窗口, 步长 {stride:.2f}m, 区块大小 {block_size:.1f}m")
 
-            input_tensor = torch.FloatTensor(block_feat).unsqueeze(0).transpose(2, 1).to(self.device)
-            with torch.no_grad():
-                device_type = 'cuda' if self.device.type == 'cuda' else 'cpu'
-                with torch.amp.autocast(device_type):
-                    pred = model(input_tensor)
-                    pred_label = torch.argmax(pred, dim=2).cpu().numpy()[0]
+        processed_windows = 0
+        for i, z in enumerate(z_centers):
+            try:
+                # 进度更新
+                if i % 10 == 0 or i == num_windows - 1:
+                    self.log(f"  进度: {i+1}/{num_windows} 窗口 ({(i+1)*100/num_windows:.1f}%)")
 
-            all_labels[sel] += pred_label
-            counts[sel] += 1
+                mask = (points[:, 2] >= z - block_size/2) & (points[:, 2] < z + block_size/2)
+                idx = np.where(mask)[0]
+
+                if len(idx) < 1024:
+                    continue
+
+                # 采样固定点数
+                if len(idx) >= 4096:
+                    sel = np.random.choice(idx, 4096, replace=False)
+                else:
+                    sel = np.random.choice(idx, 4096, replace=True)
+
+                # 中心化并提取特征
+                block_pts = points[sel] - points[sel].mean(0)
+                block_feat = np.hstack((block_pts, normals[sel]))
+
+                # 推理
+                input_tensor = torch.FloatTensor(block_feat).unsqueeze(0).transpose(2, 1).to(self.device)
+                with torch.no_grad():
+                    device_type = 'cuda' if self.device.type == 'cuda' else 'cpu'
+                    with torch.amp.autocast(device_type):
+                        pred = model(input_tensor)
+                        pred_label = torch.argmax(pred, dim=2).cpu().numpy()[0]
+
+                all_labels[sel] += pred_label
+                counts[sel] += 1
+                processed_windows += 1
+
+            except Exception as e:
+                self.log(f"⚠️  窗口 {i} 处理失败: {str(e)}")
+                continue
+
+        self.log(f"滑窗推理完成，成功处理 {processed_windows}/{num_windows} 个窗口")
 
         # 4. 后续 RANSAC 处理... (保持原样)
 

@@ -45,6 +45,18 @@ class TunnelDataset(Dataset):
         normals = points_data[:, 3:6]  # [Nx, Ny, Nz]
         labels = points_data[:, 6]  # [Label]
 
+        # 确保标签是整数 (0或1)
+        labels = labels.astype(np.int64)
+
+        # 数据验证：检查标签范围
+        unique_labels = np.unique(labels)
+        if not np.all(np.isin(unique_labels, [0, 1])):
+            raise ValueError(f"标签数据异常：发现非0/1标签 {unique_labels}")
+
+        # 特征归一化：确保法向量是单位向量（如果数据有问题）
+        norm_norms = np.linalg.norm(normals, axis=1, keepdims=True)
+        normals = np.where(norm_norms > 1e-6, normals / norm_norms, normals)
+
         # 2. 随机选取一个点作为区块的中心 (Center Point)
         center_idx = np.random.choice(points.shape[0], 1)[0]
         center_point = points[center_idx, :]
@@ -61,7 +73,10 @@ class TunnelDataset(Dataset):
 
         # 如果切出来的点太少（比如边缘区域），就退而求其次，直接随机取点
         if len(valid_indices) < 100:
-            valid_indices = np.random.choice(points.shape[0], self.num_points, replace=False)
+            if points.shape[0] >= self.num_points:
+                valid_indices = np.random.choice(points.shape[0], self.num_points, replace=False)
+            else:
+                valid_indices = np.random.choice(points.shape[0], self.num_points, replace=True)
 
         # 4. 固定点数 (Sampling)：PointNet++ 需要绝对固定的输入数量
         if len(valid_indices) >= self.num_points:
