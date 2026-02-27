@@ -6,44 +6,50 @@ from torch.utils.data import DataLoader
 from models.pointnet2_sem_seg import get_model, get_loss
 from core.dataset import TunnelDataset
 
-# 假设你已经将 PointNet++ 的模型代码放在了 models 文件夹下
-# 这里提供一个占位导入，你需要根据你克隆的仓库实际结构修改
-# from models.pointnet2_sem_seg import get_model, get_loss
 
 def train():
-    print("🚀 启动隧道管道 PointNet++ 语义分割训练...")
-
-    # 1. 基础配置
+    # ==========================================================
+    # 1. 针对 RTX 4060 & 32核 CPU 的专项配置
+    # ==========================================================
     data_root = "data/processed"
-    batch_size = 16
+    batch_size = 32  # 8GB 显存建议从 32 开始，如果报错再调回 16
     epochs = 50
     learning_rate = 0.001
+
+    # 启用底层算法自动优化
+    torch.backends.cudnn.benchmark = True
+
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"🖥️ 当前使用计算设备: {device}")
+    print(f"🖥️  检测到硬件加速: {torch.cuda.get_device_name(0)}")
+    print(f"🚀 核心配置: Batch Size={batch_size}, Device={device}")
 
     # 2. 加载数据集
-    # 2. 加载数据集 (这行代码本身其实不用大改，主要是它吃进去的 data_root 变了)
-    train_dataset = TunnelDataset(
-        data_root=data_root,
-        num_points=4096,  # 每次塞给显卡的点数，4096是经典配置
-        block_size=3.0,  # 💡 进阶建议：我把你原来的 2.0 改成了 3.0
-        train=True
+    train_dataset = TunnelDataset(data_root=data_root, num_points=4096, block_size=3.0, train=True)
+
+    # 优化点：Windows 下 32核 CPU 建议设置 num_workers 为 4 或 8
+    # pin_memory=True 能显著加快内存到显存的传输
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=8,
+        pin_memory=True,
+        drop_last=True  # 丢弃最后不满足 Batch 的数据，保持计算步长一致
     )
-    train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True, num_workers=4)
 
-    # 替换 train.py 中的这一部分
-
-
-    # 3. 初始化模型与损失函数 (2个类别：背景=0，管道=1)
-    print("🧠 正在初始化 PointNet++ 网络...")
+    # 3. 初始化模型与损失函数
     model = get_model(num_classes=2).to(device)
     criterion = get_loss().to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate)
 
-    # 4. 训练循环
+    # 4. 初始化 AMP (自动混合精度) 缩放器
+    scaler = torch.amp.GradScaler(device.type)
+
+    # 5. 训练循环
     os.makedirs("checkpoints", exist_ok=True)
     best_loss = float('inf')
 
+    print("开始训练...")
     for epoch in range(epochs):
         model.train()
         total_loss = 0.0
@@ -52,32 +58,31 @@ def train():
             points, labels = points.to(device), labels.to(device)
             optimizer.zero_grad()
 
-            # 【核心修改】：PyTorch 的 Conv1d 要求输入是 [Batch, Channels, N]
-            # 我们 DataLoader 输出的是 [Batch, N, 6]，所以必须 transpose 一下！
+            # 数据转置 [B, N, 6] -> [B, 6, N]
             points = points.transpose(2, 1)
 
-            # 前向传播
-            predictions = model(points)
+            # --- AMP 自动混合精度核心逻辑 ---
+            with torch.amp.autocast(device.type):
+                predictions = model(points)
+                loss = criterion(predictions, labels)
 
-            # 计算损失
-            loss = criterion(predictions, labels)
-            loss.backward()
-            optimizer.step()
+            # 缩放损失并回传
+            scaler.scale(loss).backward()
+            scaler.step(optimizer)
+            scaler.update()
+
             total_loss += loss.item()
 
-            if batch_idx % 10 == 0:
-                print(f"Epoch [{epoch + 1}/{epochs}] Batch [{batch_idx}/{len(train_loader)}] Loss: {loss.item():.4f}")
-
-        # ... 后续保存权重的逻辑保持不变 ...
+            if batch_idx % 5 == 0:
+                print(f"Epoch [{epoch + 1}/{epochs}] Step [{batch_idx}/{len(train_loader)}] Loss: {loss.item():.4f}")
 
         avg_loss = total_loss / len(train_loader)
         print(f"🏁 Epoch {epoch + 1} 结束，平均 Loss: {avg_loss:.4f}")
 
-        # 保存最优模型
         if avg_loss < best_loss:
             best_loss = avg_loss
             torch.save(model.state_dict(), "checkpoints/best_pipe_model.pth")
-            print(f"💾 发现更低 Loss，已保存最优模型至 checkpoints/best_pipe_model.pth")
+            print(f"💾 权重已更新: checkpoints/best_pipe_model.pth")
 
 
 if __name__ == "__main__":
