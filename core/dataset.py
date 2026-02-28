@@ -45,13 +45,13 @@ class TunnelDataset(Dataset):
         normals = points_data[:, 3:6]  # [Nx, Ny, Nz]
         labels = points_data[:, 6]  # [Label]
 
-        # 确保标签是整数 (0或1)
+        # 确保标签是整数 (0,1或2)
         labels = labels.astype(np.int64)
 
         # 数据验证：检查标签范围
         unique_labels = np.unique(labels)
-        if not np.all(np.isin(unique_labels, [0, 1])):
-            raise ValueError(f"标签数据异常：发现非0/1标签 {unique_labels}")
+        if not np.all(np.isin(unique_labels, [0, 1, 2])):
+            raise ValueError(f"标签数据异常：发现非0/1/2标签 {unique_labels}")
 
         # 特征归一化：确保法向量是单位向量（如果数据有问题）
         norm_norms = np.linalg.norm(normals, axis=1, keepdims=True)
@@ -93,8 +93,9 @@ class TunnelDataset(Dataset):
 
         # 5. 坐标归一化 (极其重要的一步！！！)
         # 神经网络对绝对坐标不敏感。我们需要把这 4096 个点的中心平移到 (0,0,0)
-        # 这样网络学习到的是“管道的局部形状”，而不是“管道在地球上的坐标”
-        selected_points = selected_points - center_point
+        # 这样网络学习到的是”管道的局部形状”，而不是”管道在地球上的坐标”
+        # 使用选中点的均值进行中心化，与推理时保持一致
+        selected_points = selected_points - selected_points.mean(0)
 
         # 6. 拼接特征：网络输入形如 (N, 6)，即 XYZ + 法向量
         # 法向量是相对角度，不需要归一化平移

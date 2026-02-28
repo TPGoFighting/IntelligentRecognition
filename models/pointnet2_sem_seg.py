@@ -182,9 +182,15 @@ class get_model(nn.Module):
 
 
 class get_loss(nn.Module):
-    def __init__(self):
+    def __init__(self, weight=None):
         super(get_loss, self).__init__()
-        self.criterion = nn.CrossEntropyLoss()
+        # 类别权重：[其他背景, 隧道壁, 管道]
+        # 给管道类更高的权重以应对数据不平衡
+        if weight is None:
+            weight = torch.FloatTensor([1.0, 1.0, 3.0])  # 管道权重3倍
+        self.criterion = nn.CrossEntropyLoss(weight=weight)
 
     def forward(self, pred, target):
-        return self.criterion(pred.reshape(-1, 2), target.reshape(-1))
+        # pred形状: [B, N, num_classes]，target形状: [B, N]
+        # 动态获取类别数
+        return self.criterion(pred.reshape(-1, pred.shape[-1]), target.reshape(-1))

@@ -19,10 +19,11 @@ class TunnelDetectorApp(QMainWindow):
         self.setWindowTitle("Intelligent Recognition - 隧道多管道识别系统 V5.5")
         self.setGeometry(100, 100, 1100, 750)
         self.raw_points = None
+        self.raw_normals = None
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         # 大点云处理配置
-        self.max_points = 1000000  # 最大处理点数，超过会自动降采样
+        self.max_points = 10000000  # 最大处理点数，超过会自动降采样
         self.voxel_size = 0.05  # 初始体素降采样大小
         self.max_windows = 200  # 最大滑窗数量，防止无限循环
         self.render_point_limit = 50000  # 渲染点数限制，防止图形崩溃
@@ -109,6 +110,11 @@ class TunnelDetectorApp(QMainWindow):
                 self.log(f"降采样后点数: {len(pcd.points)}")
 
             self.raw_points = np.asarray(pcd.points)
+            # 保存法线（如果存在）
+            if pcd.has_normals():
+                self.raw_normals = np.asarray(pcd.normals)
+            else:
+                self.raw_normals = None
 
             # 渲染点云（限制渲染点数以防止图形崩溃）
             render_points = self.raw_points
@@ -139,7 +145,7 @@ class TunnelDetectorApp(QMainWindow):
             return
 
         # 1. 加载 AI 模型
-        model = get_model(num_classes=2).to(self.device)
+        model = get_model(num_classes=3).to(self.device)  # 三分类：管道(2)、隧道壁(1)、其他背景(0)
         state_dict = torch.load(model_path, map_location=self.device, weights_only=True)
         model.load_state_dict(state_dict)
         model.eval()
@@ -148,8 +154,19 @@ class TunnelDetectorApp(QMainWindow):
         self.log("预处理：降采样与法向计算...")
         pcd = o3d.geometry.PointCloud()
         pcd.points = o3d.utility.Vector3dVector(self.raw_points)
+
+        # 如果原始法线存在，使用它们
+        if self.raw_normals is not None:
+            pcd.normals = o3d.utility.Vector3dVector(self.raw_normals)
+            self.log("使用点云文件中的法线信息")
+        else:
+            self.log("点云文件中无法线信息，重新计算法线")
+
         downpcd = pcd.voxel_down_sample(voxel_size=0.05)
-        downpcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.15, max_nn=30))
+
+        # 如果下采样后没有法线，则计算法线
+        if not downpcd.has_normals():
+            downpcd.estimate_normals(search_param=o3d.geometry.KDTreeSearchParamHybrid(radius=0.15, max_nn=30))
 
         points = np.asarray(downpcd.points)
         normals = np.asarray(downpcd.normals)
@@ -208,7 +225,8 @@ class TunnelDetectorApp(QMainWindow):
                         pred = model(input_tensor)
                         pred_label = torch.argmax(pred, dim=2).cpu().numpy()[0]
 
-                all_labels[sel] += pred_label
+                # 统计管道类别(2)的投票数
+                all_labels[sel] += (pred_label == 2).astype(np.int32)
                 counts[sel] += 1
                 processed_windows += 1
 
@@ -225,13 +243,14 @@ class TunnelDetectorApp(QMainWindow):
         self.plotter.remove_actor("scene")  # 隐藏背景
         self.plotter.add_mesh(pv.PolyData(self.raw_points), color="#404040", point_size=1, opacity=0.1, name="bg")
 
-        # 计算管道点：基于投票结果，当管道类别（1）的票数超过一半时认为是管道
+        # 计算管道点：基于投票结果，当管道类别（2）的投票比例超过阈值时认为是管道
         valid_mask = counts > 0
         if not np.any(valid_mask):
             self.log("[错误] 没有有效的推理点")
             return
 
-        pipe_mask = (all_labels[valid_mask] / counts[valid_mask] > 0.5)
+        # 进一步降低阈值以提高召回率：从0.2降到0.1
+        pipe_mask = (all_labels[valid_mask] / counts[valid_mask] > 0.1)
         pipe_points = points[valid_mask][pipe_mask]
 
         if len(pipe_points) == 0:
@@ -245,11 +264,22 @@ class TunnelDetectorApp(QMainWindow):
 
         # 循环提取，直到剩余点数不足以构成一根管
         while len(remaining_points) > 200:
-            cylinder = pyrsc.Cylinder()
-            center, axis, radius, inliers = cylinder.fit(remaining_points, thresh=0.08, maxIteration=1000)
+            # 使用简单圆柱拟合算法（pyransac3d有bug）
+            # 假设管道沿Z轴方向
+            center_xy = remaining_points[:, :2].mean(axis=0)
+            radial_distances = np.linalg.norm(remaining_points[:, :2] - center_xy, axis=1)
+            radius = np.median(radial_distances)
+            center_z = remaining_points[:, 2].mean()
+            center = np.array([center_xy[0], center_xy[1], center_z])
+            axis = np.array([0, 0, 1])
 
-            # 物理规则过滤：半径是否在 0.2m - 1.5m 之间
-            if 0.2 < radius < 1.5 and len(inliers) > 150:
+            # 计算内点
+            threshold = 0.08
+            distances_to_surface = np.abs(radial_distances - radius)
+            inliers = np.where(distances_to_surface < threshold)[0]
+
+            # 物理规则过滤：管道半径应在 0.15m - 0.8m 之间
+            if 0.15 < radius < 0.8 and len(inliers) > 50:
                 found_pipes_count += 1
                 current_pipe_pts = remaining_points[inliers]
 

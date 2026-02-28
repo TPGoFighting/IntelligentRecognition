@@ -43,43 +43,66 @@ def generate_cylinder_points(center, axis, radius, height, num_points=5000):
     return points
 
 def generate_tunnel_scene(num_pipes=3, num_background=50000, noise_level=0.1):
-    """生成隧道场景点云：包含多个管道和复杂背景"""
+    """生成隧道场景点云：包含多个管道和复杂背景
+    标签系统：管道=2，隧道壁=1，其他背景=0
+    样本比例目标：管道:隧道壁:其他 ≈ 1:1:1
+    """
     points_list = []
     normals_list = []
     labels_list = []
 
+    # 计算平衡的点数分配
+    # 目标：管道:隧道壁:其他 = 1:1:1
+    total_points = num_pipes * 8000 + num_background
+    target_per_class = total_points // 3
+
+    # 管道点数保持不变（每根管道8000点）
+    total_pipe_points = num_pipes * 8000
+    # 隧道壁和其他背景各占剩余点数的一半
+    tunnel_wall_points = target_per_class
+    other_background_points = target_per_class
+
     # 生成管道
     for i in range(num_pipes):
-        # 随机生成管道参数
-        center = np.random.uniform(-5, 5, size=3)
-        axis = np.random.uniform(-1, 1, size=3)
-        axis[2] = 0.8  # 主要沿z方向
-        axis = axis / np.linalg.norm(axis)
-        radius = np.random.uniform(0.25, 0.5)
-        height = np.random.uniform(4, 8)
+        # 随机生成管道参数 - 修复：管道应该在隧道壁附近
+        # 管道中心应该在半径1.5-2.5m的圆环内（隧道壁半径3.0m）
+        angle = np.random.uniform(0, 2*np.pi)
+        distance = np.random.uniform(1.5, 2.5)  # 距离原点
+        center_xy = np.array([np.cos(angle) * distance, np.sin(angle) * distance])
+        center_z = np.random.uniform(-4, 4)  # 高度方向
+
+        center = np.array([center_xy[0], center_xy[1], center_z])
+
+        # 管道方向：沿隧道轴向（z方向），不倾斜以便RANSAC能正确拟合
+        axis = np.array([0, 0, 1])  # 标准Z轴方向
+
+        radius = np.random.uniform(0.25, 0.4)  # 缩小半径范围，更接近真实管道
+        height = np.random.uniform(5, 8)  # 增加高度，确保管道足够长
 
         pipe_points = generate_cylinder_points(center, axis, radius, height, num_points=8000)
 
         # 计算法向量（近似圆柱法向）
+        # 对于沿Z轴的圆柱，法向量就是径向方向
         normals = pipe_points - center
-        normals = normals - np.outer(np.dot(normals, axis), axis)
-        normals = normals / np.linalg.norm(normals, axis=1, keepdims=True)
+        normals[:, 2] = 0  # Z方向分量为0
+        norm_lengths = np.linalg.norm(normals, axis=1, keepdims=True)
+        normals = np.where(norm_lengths > 1e-6, normals / norm_lengths, normals)
         normals = np.nan_to_num(normals)
 
         points_list.append(pipe_points)
         normals_list.append(normals)
-        labels_list.append(np.ones(len(pipe_points), dtype=np.int32))
+        labels_list.append(np.full(len(pipe_points), 2, dtype=np.int32))  # 管道标签=2
 
     # 生成复杂背景（隧道壁、支架等）
-    # 1. 隧道壁（大圆柱）
-    tunnel_radius = 3.0
+    # 1. 隧道壁（大圆柱）- 调整为更大半径，使管道在内部
+    tunnel_radius = 4.0  # 增加隧道壁半径，使管道完全在内部
     tunnel_height = 15.0
     tunnel_center = np.array([0, 0, 0])
     tunnel_axis = np.array([0, 0, 1])
 
-    t_bg = np.random.rand(num_background // 2) * 2 * np.pi
-    z_bg = np.random.rand(num_background // 2) * tunnel_height - tunnel_height/2
-    r_bg = tunnel_radius + np.random.randn(num_background // 2) * 0.2
+    t_bg = np.random.rand(tunnel_wall_points) * 2 * np.pi
+    z_bg = np.random.rand(tunnel_wall_points) * tunnel_height - tunnel_height/2
+    r_bg = tunnel_radius + np.random.randn(tunnel_wall_points) * 0.2
 
     x_bg = r_bg * np.cos(t_bg)
     y_bg = r_bg * np.sin(t_bg)
@@ -93,21 +116,23 @@ def generate_tunnel_scene(num_pipes=3, num_background=50000, noise_level=0.1):
     tunnel_normals = np.nan_to_num(tunnel_normals)
 
     # 2. 随机支架和杂点
-    random_points = np.random.uniform(-4, 4, size=(num_background // 4, 3))
+    random_points = np.random.uniform(-4, 4, size=(other_background_points, 3))
     random_points[:, 2] = np.random.uniform(-tunnel_height/2, tunnel_height/2, size=len(random_points))
     random_normals = np.random.uniform(-1, 1, size=(len(random_points), 3))
     random_normals = random_normals / np.linalg.norm(random_normals, axis=1, keepdims=True)
 
-    # 合并背景
-    bg_points = np.vstack([tunnel_points, random_points])
-    bg_normals = np.vstack([tunnel_normals, random_normals])
+    # 分别添加隧道壁（标签1）和随机背景（标签0）
+    # 1. 隧道壁（大圆柱）
+    tunnel_points += np.random.randn(*tunnel_points.shape) * noise_level
+    points_list.append(tunnel_points)
+    normals_list.append(tunnel_normals)
+    labels_list.append(np.full(len(tunnel_points), 1, dtype=np.int32))  # 隧道壁标签=1
 
-    # 添加噪声
-    bg_points += np.random.randn(*bg_points.shape) * noise_level
-
-    points_list.append(bg_points)
-    normals_list.append(bg_normals)
-    labels_list.append(np.zeros(len(bg_points), dtype=np.int32))
+    # 2. 随机支架和杂点（标签0）
+    random_points += np.random.randn(*random_points.shape) * noise_level
+    points_list.append(random_points)
+    normals_list.append(random_normals)
+    labels_list.append(np.zeros(len(random_points), dtype=np.int32))  # 其他背景标签=0
 
     # 合并所有点
     all_points = np.vstack(points_list)
@@ -138,11 +163,21 @@ def save_as_ply(filename, points, normals=None, labels=None):
         pcd.normals = o3d.utility.Vector3dVector(normals)
 
     if labels is not None:
-        # 为管道点（标签1）赋予红色，背景点（标签0）赋予灰色
+        # 三分类颜色映射：管道=2(红色)，隧道壁=1(蓝色)，其他背景=0(灰色)
         colors = np.zeros((len(points), 3))
-        pipe_mask = labels == 1
-        colors[pipe_mask] = [1, 0, 0]  # 红色管道
-        colors[~pipe_mask] = [0.5, 0.5, 0.5]  # 灰色背景
+
+        # 管道点 (标签2) - 红色
+        pipe_mask = labels == 2
+        colors[pipe_mask] = [1, 0, 0]  # 红色
+
+        # 隧道壁点 (标签1) - 蓝色
+        wall_mask = labels == 1
+        colors[wall_mask] = [0, 0, 1]  # 蓝色
+
+        # 其他背景点 (标签0) - 灰色
+        other_mask = labels == 0
+        colors[other_mask] = [0.5, 0.5, 0.5]  # 灰色
+
         pcd.colors = o3d.utility.Vector3dVector(colors)
 
     o3d.io.write_point_cloud(filename, pcd)
@@ -155,10 +190,10 @@ def generate_test_dataset():
 
     print("生成测试数据集...")
 
-    # 1. 小规模测试点云 (10k点)
-    print("\n1. 生成小规模点云 (10k点)...")
+    # 1. 小规模测试点云 (10k点) - 单管道版本
+    print("\n1. 生成小规模点云 (10k点) - 单管道...")
     points_small, normals_small, labels_small = generate_tunnel_scene(
-        num_pipes=2, num_background=8000, noise_level=0.05
+        num_pipes=1, num_background=8000, noise_level=0.05
     )
     # 只取前10000个点
     indices = np.random.choice(len(points_small), 10000, replace=False)
@@ -169,12 +204,15 @@ def generate_test_dataset():
     save_as_ply("test_data/small_tunnel.ply", points_small, normals_small, labels_small)
     save_as_npy("test_data/processed/train_small.npy", points_small, normals_small, labels_small)
 
-    # 2. 中等规模点云 (50k点)
-    print("\n2. 生成中等规模点云 (50k点)...")
+    # 2. 中等规模点云 (50k点) - 单管道版本
+    print("\n2. 生成中等规模点云 (50k点) - 单管道...")
     points_medium, normals_medium, labels_medium = generate_tunnel_scene(
-        num_pipes=3, num_background=45000, noise_level=0.08
+        num_pipes=1, num_background=48000, noise_level=0.08
     )
-    indices = np.random.choice(len(points_medium), 50000, replace=False)
+    if len(points_medium) >= 50000:
+        indices = np.random.choice(len(points_medium), 50000, replace=False)
+    else:
+        indices = np.random.choice(len(points_medium), 50000, replace=True)
     points_medium = points_medium[indices]
     normals_medium = normals_medium[indices]
     labels_medium = labels_medium[indices]
