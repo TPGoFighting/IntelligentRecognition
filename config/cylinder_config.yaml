@@ -1,0 +1,54 @@
+# Cylinder-only configuration (backward compatible with original system)
+
+shapes:
+  cylinder:
+    label: 2
+    params:
+      radius_range: [0.15, 0.8]
+      height_range: [1.0, 10.0]
+      direction: [0, 0, 1]  # Fixed Z-axis like original system
+    fitting:
+      algorithm: "ransac_cylinder"
+      threshold: 0.08
+      min_inliers: 50
+      max_iterations: 1000
+    min_points: 100
+
+scene:
+  type: "tunnel"
+  bounds: [[-10, 10], [-10, 10], [0, 20]]
+  background_density: 50000
+  noise_level: 0.01
+
+inference:
+  block_size: 3.0
+  stride: 1.5
+  num_points: 4096
+  vote_threshold: 0.1
+  max_windows: 200
+  batch_size: 32
+  use_gpu: true
+
+training:
+  batch_size: 8
+  epochs: 50
+  learning_rate: 0.001
+  num_classes: 3  # background + cylinder
+  class_weights: [1.0, 1.0, 3.0]
+  optimizer: "adam"
+  scheduler: "step"
+  step_size: 20
+  gamma: 0.5
+
+visualization:
+  point_size: 2
+  background_color: [0.1, 0.1, 0.1]
+  shape_colors:
+    background: [0.5, 0.5, 0.5]
+    cylinder: [1.0, 0.0, 0.0]
+
+logging:
+  level: "INFO"
+  format: "json"
+  output_dir: "logs"
+  enable_performance_metrics: true

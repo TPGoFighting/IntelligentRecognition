@@ -1,0 +1,79 @@
+# Indoor scene configuration with multiple shape types
+
+shapes:
+  plane:
+    label: 2
+    params:
+      area_range: [2.0, 50.0]
+      thickness: 0.1
+    fitting:
+      algorithm: "ransac_plane"
+      threshold: 0.05
+      min_inliers: 100
+      max_iterations: 500
+    min_points: 200
+
+  cuboid:
+    label: 3
+    params:
+      size_range: [[0.3, 2.0], [0.3, 2.0], [0.3, 2.0]]
+    fitting:
+      algorithm: "ransac_cuboid"
+      threshold: 0.05
+      min_inliers: 50
+      max_iterations: 1000
+    min_points: 100
+
+  cylinder:
+    label: 4
+    params:
+      radius_range: [0.05, 0.3]  # Smaller pipes/columns
+      height_range: [0.5, 3.0]
+      direction: "auto"
+    fitting:
+      algorithm: "ransac_cylinder"
+      threshold: 0.05
+      min_inliers: 30
+      max_iterations: 1000
+    min_points: 50
+
+scene:
+  type: "indoor"
+  bounds: [[-5, 5], [-5, 5], [0, 3]]  # Typical room size
+  background_density: 30000
+  noise_level: 0.005
+
+inference:
+  block_size: 2.0  # Smaller blocks for indoor
+  stride: 1.0
+  num_points: 4096
+  vote_threshold: 0.1
+  max_windows: 150
+  batch_size: 32
+  use_gpu: true
+
+training:
+  batch_size: 8
+  epochs: 50
+  learning_rate: 0.001
+  num_classes: 5  # background + 3 shapes
+  class_weights: [1.0, 1.0, 2.0, 3.0, 3.0]
+  optimizer: "adam"
+  scheduler: "step"
+  step_size: 20
+  gamma: 0.5
+
+visualization:
+  point_size: 2
+  background_color: [0.1, 0.1, 0.1]
+  shape_colors:
+    background: [0.5, 0.5, 0.5]
+    plane: [1.0, 1.0, 0.0]
+    cuboid: [0.0, 0.0, 1.0]
+    cylinder: [1.0, 0.0, 0.0]
+
+logging:
+  level: "INFO"
+  format: "json"
+  output_dir: "logs"
+  enable_performance_metrics: true

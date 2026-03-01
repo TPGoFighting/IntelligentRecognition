@@ -1,0 +1,99 @@
+# Universal Point Cloud Shape Recognition Configuration
+
+# Shape definitions
+# Label system: 0=background, 1=unlabeled/reserved, 2+=shapes
+# Labels 0 and 1 are reserved for background and unlabeled points
+shapes:
+  cylinder:
+    label: 2
+    params:
+      radius_range: [0.15, 0.8]
+      height_range: [1.0, 10.0]
+      direction: "auto"  # "auto" for PCA detection, or [x, y, z] for fixed
+    fitting:
+      algorithm: "ransac_cylinder"
+      threshold: 0.08
+      min_inliers: 50
+      max_iterations: 1000
+    min_points: 100
+
+  sphere:
+    label: 3
+    params:
+      radius_range: [0.2, 1.0]
+    fitting:
+      algorithm: "ransac_sphere"
+      threshold: 0.05
+      min_inliers: 30
+      max_iterations: 1000
+    min_points: 50
+
+  cuboid:
+    label: 4
+    params:
+      size_range: [[0.3, 2.0], [0.3, 2.0], [0.3, 2.0]]  # [width, depth, height]
+    fitting:
+      algorithm: "ransac_cuboid"
+      threshold: 0.05
+      min_inliers: 50
+      max_iterations: 1000
+    min_points: 100
+
+  plane:
+    label: 5
+    params:
+      area_range: [1.0, 100.0]
+      thickness: 0.1
+    fitting:
+      algorithm: "ransac_plane"
+      threshold: 0.05
+      min_inliers: 100
+      max_iterations: 500
+    min_points: 200
+
+# Scene configuration
+scene:
+  type: "generic"  # Options: "generic", "tunnel", "indoor", "outdoor"
+  bounds: [[-10, 10], [-10, 10], [0, 20]]  # [x_range, y_range, z_range]
+  background_density: 5000  # Further reduced for better class balance
+  noise_level: 0.01  # Gaussian noise std dev
+
+# Inference configuration
+inference:
+  block_size: 3.0
+  stride: 1.5
+  num_points: 4096
+  vote_threshold: 0.1
+  max_windows: 200
+  batch_size: 32
+  use_gpu: true
+
+# Training configuration
+training:
+  batch_size: 8
+  epochs: 50  # Increased for better training
+  learning_rate: 0.001
+  num_classes: 6  # 6 classes: 0=background, 1=unlabeled, 2=cylinder, 3=sphere, 4=cuboid, 5=plane
+  class_weights: [1.0, 1.0, 10.0, 10.0, 10.0, 10.0]  # background=1, unlabeled=1, shapes=10 (for better balance)
+  optimizer: "adam"
+  scheduler: "step"
+  step_size: 20
+  gamma: 0.5
+
+# Visualization
+visualization:
+  point_size: 2
+  background_color: [0.1, 0.1, 0.1]
+  shape_colors:
+    background: [0.5, 0.5, 0.5]
+    cylinder: [1.0, 0.0, 0.0]
+    sphere: [0.0, 1.0, 0.0]
+    cuboid: [0.0, 0.0, 1.0]
+    plane: [1.0, 1.0, 0.0]
+
+# Logging
+logging:
+  level: "INFO"  # DEBUG, INFO, WARNING, ERROR
+  format: "json"  # "json" or "text"
+  output_dir: "logs"
+  enable_performance_metrics: true
