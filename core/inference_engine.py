@@ -360,7 +360,7 @@ class UniversalInferenceEngine:
             )
             objects.append(obj)
 
-            print(f"    ✅ {shape_name} #{iteration}: {len(inlier_indices)} points, confidence={confidence:.3f}")
+            print(f"    [OK] {shape_name} #{iteration}: {len(inlier_indices)} points, confidence={confidence:.3f}")
 
             # Remove inliers from remaining points
             remaining_points = np.delete(remaining_points, inlier_indices, axis=0)

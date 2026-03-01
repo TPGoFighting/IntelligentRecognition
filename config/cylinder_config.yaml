@@ -4,15 +4,15 @@ shapes:
   cylinder:
     label: 2
     params:
-      radius_range: [0.15, 0.8]
-      height_range: [1.0, 10.0]
+      radius_range: [0.05, 20.0]  # 大幅扩大范围
+      height_range: [0.5, 50.0]
       direction: [0, 0, 1]  # Fixed Z-axis like original system
     fitting:
       algorithm: "ransac_cylinder"
-      threshold: 0.08
-      min_inliers: 50
+      threshold: 0.15
+      min_inliers: 30
       max_iterations: 1000
-    min_points: 100
+    min_points: 50
 
 scene:
   type: "tunnel"

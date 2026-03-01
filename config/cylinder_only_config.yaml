@@ -1,0 +1,59 @@
+# 圆柱体专用配置 - 优化版
+# Cylinder-only configuration - Optimized
+
+shapes:
+  cylinder:
+    label: 2
+    params:
+      radius_range: [0.05, 20.0]  # 大幅扩大范围以适应各种尺寸
+      height_range: [0.5, 50.0]   # 大幅扩大范围
+      direction: "auto"  # 自动检测方向
+    fitting:
+      algorithm: "ransac_cylinder"
+      threshold: 0.15  # 增加阈值以提高鲁棒性
+      min_inliers: 30  # 降低最小内点数
+      max_iterations: 1000
+    min_points: 50  # 降低最小点数
+
+scene:
+  type: "tunnel"
+  bounds: [[-15, 15], [-15, 15], [0, 25]]  # 扩大场景范围
+  background_density: 8000  # 减少背景点，平衡类别
+  noise_level: 0.015  # 增加噪声，提高鲁棒性
+
+inference:
+  block_size: 3.0
+  stride: 1.5
+  num_points: 4096
+  vote_threshold: 0.1
+  max_windows: 200
+  batch_size: 32
+  use_gpu: true
+
+training:
+  batch_size: 16  # 增加batch size
+  epochs: 100  # 增加epochs
+  learning_rate: 0.001
+  weight_decay: 0.0001  # 添加权重衰减
+  num_classes: 3  # 0=background, 1=unlabeled, 2=cylinder
+  class_weights: [1.0, 1.0, 8.0]  # 增加圆柱体权重
+  optimizer: "adamw"  # 使用AdamW
+  scheduler: "cosine"  # 使用余弦退火
+  warmup_epochs: 5  # 预热
+  min_lr: 0.00001
+  use_gpu: true
+  num_workers: 4
+  pretrained_weights: null  # 预训练权重路径（可选）
+
+visualization:
+  point_size: 2
+  background_color: [0.1, 0.1, 0.1]
+  shape_colors:
+    background: [0.5, 0.5, 0.5]
+    cylinder: [1.0, 0.0, 0.0]
+
+logging:
+  level: "INFO"
+  format: "json"
+  output_dir: "logs"
+  enable_performance_metrics: true
