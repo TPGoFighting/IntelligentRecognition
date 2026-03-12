@@ -8,7 +8,8 @@
       "Bash(pip install:*)",
       "Bash(rm:*)",
       "Bash(timeout 300 python:*)",
-      "Bash(pkill:*)"
+      "Bash(pkill:*)",
+      "Bash(dir .venv:*)"
     ]
   }
 }

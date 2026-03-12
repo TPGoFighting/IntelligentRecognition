@@ -15,11 +15,11 @@ def train():
     # 1. 针对 RTX 4060 & 32核 CPU 的专项配置
     # ==========================================================
     data_root = "test_data/processed"  # 改为测试数据目录
-    batch_size = 8  # 增加batch size以提高稳定性
-    epochs = 50  # 增加到50个epoch以充分训练
-    learning_rate = 0.001  # 提高学习率加快收敛
-    grad_clip = 10.0  # 增加梯度裁剪阈值
-    weight_decay = 1e-4  # 增加权重衰减，防止过拟合
+    batch_size = 8
+    epochs = 100  # ↑ 从 50 增加到 100，让模型充分训练
+    learning_rate = 0.002  # ↑ 从 0.001 提高到 0.002，加快收敛
+    grad_clip = 5.0  # ↓ 从 10.0 降到 5.0，更严格的梯度控制
+    weight_decay = 1e-4  # 保持不变
 
     # 启用底层算法自动优化
     torch.backends.cudnn.benchmark = True
@@ -49,12 +49,12 @@ def train():
     model = get_model(num_classes=3).to(device)  # 三分类：管道(2)、隧道壁(1)、其他背景(0)
 
     # 设置类别权重：给管道类更高的权重以应对数据不平衡
-    class_weights = torch.FloatTensor([1.0, 1.0, 3.0]).to(device)  # [其他背景, 隧道壁, 管道]
+    class_weights = torch.FloatTensor([0.5, 1.0, 2.0])  # 降低管道权重到 2 倍   [其他背景, 隧道壁, 管道]
     criterion = get_loss(weight=class_weights).to(device)
     optimizer = optim.Adam(model.parameters(), lr=learning_rate, weight_decay=weight_decay)
 
     # 学习率调度器：每10个epoch衰减到原来的0.5
-    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=10, gamma=0.5)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs, eta_min=1e-6)
 
     # 4. 禁用 AMP (自动混合精度) 缩放器，因为可能导致NaN
     # scaler = torch.amp.GradScaler(device.type)

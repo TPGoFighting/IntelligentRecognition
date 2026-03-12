@@ -129,7 +129,7 @@ def main():
             # Store summary
             all_results[str(file_path)] = {
                 'num_objects': len(detected_objects),
-                'objects': [obj.to_dict() for obj in detected_objects]
+                'objects': [obj.to_dict_serializable() for obj in detected_objects]
             }
 
             # Visualize if requested

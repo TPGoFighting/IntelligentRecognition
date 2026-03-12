@@ -194,3 +194,5 @@ class get_loss(nn.Module):
         # pred形状: [B, N, num_classes]，target形状: [B, N]
         # 动态获取类别数
         return self.criterion(pred.reshape(-1, pred.shape[-1]), target.reshape(-1))
+
+    PointNet2SemSeg = get_model

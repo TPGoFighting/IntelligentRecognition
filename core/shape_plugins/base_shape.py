@@ -33,6 +33,30 @@ class DetectedObject:
             'confidence': float(self.confidence)
         }
 
+    def to_dict_serializable(self) -> Dict[str, Any]:
+        """Convert to dictionary with JSON-serializable types (handles numpy arrays)."""
+        import numpy as np
+
+        def convert_value(val):
+            if isinstance(val, np.ndarray):
+                return val.tolist()
+            elif isinstance(val, (np.float32, np.float64)):
+                return float(val)
+            elif isinstance(val, (np.int32, np.int64)):
+                return int(val)
+            elif isinstance(val, dict):
+                return {k: convert_value(v) for k, v in val.items()}
+            elif isinstance(val, list):
+                return [convert_value(v) for v in val]
+            return val
+
+        return {
+            'shape_type': self.shape_type,
+            'params': convert_value(self.params),
+            'num_points': self.num_points,
+            'confidence': float(self.confidence)
+        }
+
 
 class BaseShape(ABC):
     """

@@ -55,7 +55,7 @@ shapes:
 scene:
   type: "generic"  # Options: "generic", "tunnel", "indoor", "outdoor"
   bounds: [[-10, 10], [-10, 10], [0, 20]]  # [x_range, y_range, z_range]
-  background_density: 5000  # Further reduced for better class balance
+  background_density: 2000  # Reduced for better class balance
   noise_level: 0.01  # Gaussian noise std dev
 
 # Inference configuration
@@ -71,14 +71,12 @@ inference:
 # Training configuration
 training:
   batch_size: 8
-  epochs: 50  # Increased for better training
-  learning_rate: 0.001
+  epochs: 150  # Increased for better convergence
+  learning_rate: 0.002  # Increased learning rate
   num_classes: 6  # 6 classes: 0=background, 1=unlabeled, 2=cylinder, 3=sphere, 4=cuboid, 5=plane
   class_weights: [1.0, 1.0, 10.0, 10.0, 10.0, 10.0]  # background=1, unlabeled=1, shapes=10 (for better balance)
   optimizer: "adam"
-  scheduler: "step"
-  step_size: 20
-  gamma: 0.5
+  scheduler: "cosine"  # Changed to cosine annealing for smoother convergence
 
 # Visualization
 visualization:
