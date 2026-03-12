@@ -1,16 +1,48 @@
-# Dataset
-data/
-*.npy
-*.pcd
-*.ply
-
-# Model weights
-checkpoints/
-*.pth
-*.pt
-
-# Python caches
+# Python caches and IDE files
 __pycache__/
 *.pyc
 .idea/
 .vscode/
+.python-version
+.ipynb_checkpoints/
+
+# Dataset files
+data/
+dataset/
+DST/
+*.npy
+*.npz
+*.pcd
+*.ply
+*.json
+
+# Model weights and directories
+models/
+checkpoints/
+*.pth
+*.pt
+
+# Project-specific ignores
+.claude/
+*.log
+results/
+test_data/
+
+# Common ignores
+.DS_Store
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.swp
+*.swo
+*~
+.coverage
+.pytest_cache/
+htmlcov/
+*.egg-info/
+dist/
+build/
+*.so
+*.dylib
